@@ -1,4 +1,5 @@
-// Unfollow Watch — background service worker.
+// Unfollow Watch — background script (service worker in Chrome, persistent
+// background page in Firefox).
 //
 // Keeps a snapshot of your followers and following, diffs every new scan
 // against it, and records the changes as events (unfollowed you, new follower,
@@ -21,6 +22,13 @@ const PAGE_DELAY = [2000, 4000]; // random pause between list pages, ms
 const BREAK_EVERY = 30; // pages; then a longer pause
 const BREAK_DELAY = [15_000, 30_000];
 
+// Firefox exposes the extension API as `browser`, Chrome as `chrome`.
+const ext = globalThis.browser ?? globalThis.chrome;
+const action = ext.action ?? ext.browserAction; // the Firefox build is Manifest V2
+// Firefox (the only browser with runtime.getBrowserInfo) rejects notification
+// buttons, even though it defines notifications.onButtonClicked.
+const NOTIFICATION_BUTTONS = typeof ext.runtime.getBrowserInfo !== 'function';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const jitter = (min, max) => Math.round(min + Math.random() * (max - min));
 const fmt = (n) => Number(n).toLocaleString('en-US');
@@ -39,27 +47,27 @@ class IgError extends Error {
 // ---------------------------------------------------------------- storage
 
 async function getSettings() {
-  const { settings } = await chrome.storage.local.get('settings');
+  const { settings } = await ext.storage.local.get('settings');
   return { ...DEFAULT_SETTINGS, ...settings };
 }
 
 async function saveSettings(next) {
   const settings = { ...(await getSettings()), ...next };
-  await chrome.storage.local.set({ settings });
+  await ext.storage.local.set({ settings });
   await scheduleCheck();
   return settings;
 }
 
 async function getAcct(userId) {
   const key = acctKey(userId);
-  return (await chrome.storage.local.get(key))[key] || null;
+  return (await ext.storage.local.get(key))[key] || null;
 }
 
 async function mutateAcct(userId, fn) {
   const acct = await getAcct(userId);
   if (!acct) return null;
   fn(acct);
-  await chrome.storage.local.set({ [acctKey(userId)]: acct });
+  await ext.storage.local.set({ [acctKey(userId)]: acct });
   return acct;
 }
 
@@ -68,19 +76,20 @@ function pushEvents(acct, events) {
 }
 
 async function scheduleCheck() {
-  await chrome.alarms.clear(CHECK_ALARM);
+  await ext.alarms.clear(CHECK_ALARM);
   const { checkMinutes } = await getSettings();
   if (checkMinutes > 0) {
-    chrome.alarms.create(CHECK_ALARM, { delayInMinutes: 1, periodInMinutes: checkMinutes });
+    ext.alarms.create(CHECK_ALARM, { delayInMinutes: 1, periodInMinutes: checkMinutes });
   }
 }
 
 // ---------------------------------------------------------------- Instagram API
 
-// Requests from the service worker carry a chrome-extension:// origin, which
+// Requests from the background carry the extension's own origin, which
 // Instagram rejects for POSTs. Rewrite Origin/Referer on our own tab-less requests.
+// If the rule can't be set, refused requests still fall back to an instagram.com tab.
 async function ensureHeaderRule() {
-  await chrome.declarativeNetRequest.updateSessionRules({
+  await ext.declarativeNetRequest?.updateSessionRules({
     removeRuleIds: [1],
     addRules: [{
       id: 1,
@@ -94,25 +103,58 @@ async function ensureHeaderRule() {
       },
       condition: {
         requestDomains: ['instagram.com'],
-        tabIds: [chrome.tabs.TAB_ID_NONE],
+        tabIds: [ext.tabs.TAB_ID_NONE],
         resourceTypes: ['xmlhttprequest', 'other'],
       },
     }],
-  });
+  }).catch(() => {});
 }
 
-async function getCookie(name) {
-  const c = await chrome.cookies.get({ url: IG, name });
-  return c ? c.value : null;
+// The cookie store that holds the Instagram login. In Firefox this can be a
+// container (Facebook Container keeps instagram.com in one); background
+// requests only carry the default store's cookies, so requests for a
+// container login go through an instagram.com tab in that container.
+let loginStore = null; // { id, isDefault }
+
+async function readCookie(name, storeId) {
+  const details = { url: IG, name, ...(storeId ? { storeId } : {}) };
+  try {
+    return await ext.cookies.get(details);
+  } catch {
+    // Firefox with first-party isolation turned on requires firstPartyDomain.
+    return ext.cookies.get({ ...details, firstPartyDomain: 'instagram.com' }).catch(() => null);
+  }
+}
+
+// Firefox lists a container's cookie store only while a tab is open in it;
+// contextualIdentities (Firefox only) lists every container.
+async function otherCookieStores() {
+  const ids = new Set((await ext.cookies.getAllCookieStores()).map((s) => s.id));
+  const containers = ext.contextualIdentities ? await ext.contextualIdentities.query({}).catch(() => []) : [];
+  for (const c of containers) ids.add(c.cookieStoreId);
+  return ids;
 }
 
 async function getSession() {
-  const userId = await getCookie('ds_user_id');
-  if (!userId) throw new IgError('NOT_LOGGED_IN', 'Log in to instagram.com in this browser first.');
-  return { userId, csrf: await getCookie('csrftoken') };
+  let user = await readCookie('ds_user_id');
+  let store = user && { id: user.storeId, isDefault: true };
+  if (!user) {
+    for (const id of await otherCookieStores()) {
+      user = await readCookie('ds_user_id', id);
+      if (user) {
+        store = { id, isDefault: false };
+        break;
+      }
+    }
+  }
+  if (!user) throw new IgError('NOT_LOGGED_IN', 'Log in to instagram.com in this browser first.');
+  loginStore = store;
+  const csrf = await readCookie('csrftoken', store.id);
+  return { userId: user.value, csrf: csrf?.value || null };
 }
 
 async function directFetch(url, init) {
+  if (loginStore && !loginStore.isDefault) return null; // see loginStore
   const res = await fetch(url, { ...init, credentials: 'include' });
   return { status: res.status, text: await res.text(), via: 'background' };
 }
@@ -127,21 +169,25 @@ let helperCloseTimer = null;
 function waitForLoad(tabId) {
   return new Promise((resolve) => {
     const done = () => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
+      ext.tabs.onUpdated.removeListener(onUpdated);
       clearTimeout(timer);
       resolve();
     };
     const onUpdated = (id, info) => id === tabId && info.status === 'complete' && done();
     const timer = setTimeout(done, 20_000);
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    chrome.tabs.get(tabId).then((t) => t.status === 'complete' && done(), done);
+    ext.tabs.onUpdated.addListener(onUpdated);
+    ext.tabs.get(tabId).then((t) => t.status === 'complete' && done(), done);
   });
 }
 
 async function instagramTabs() {
-  const tabs = (await chrome.tabs.query({ url: 'https://www.instagram.com/*' })).filter((t) => !t.discarded);
+  // Only tabs logged in to the same account: in Firefox, tabs in other
+  // containers have other cookies.
+  const sameStore = (t) => !t.cookieStoreId || !loginStore || t.cookieStoreId === loginStore.id;
+  const tabs = (await ext.tabs.query({ url: 'https://www.instagram.com/*' })).filter((t) => !t.discarded && sameStore(t));
   if (tabs.length || !mayOpenTab) return tabs;
-  const tab = await chrome.tabs.create({ url: `${IG}/`, active: false });
+  const inContainer = loginStore && !loginStore.isDefault ? { cookieStoreId: loginStore.id } : {};
+  const tab = await ext.tabs.create({ url: `${IG}/`, active: false, ...inContainer });
   helperTab = tab.id;
   await waitForLoad(tab.id);
   return [tab];
@@ -151,12 +197,12 @@ function releaseHelperTab(delay = 60_000) {
   clearTimeout(helperCloseTimer);
   if (helperTab == null) return;
   helperCloseTimer = setTimeout(() => {
-    chrome.tabs.remove(helperTab).catch(() => {});
+    ext.tabs.remove(helperTab).catch(() => {});
     helperTab = null;
   }, delay);
 }
 
-chrome.tabs.onRemoved.addListener((id) => {
+ext.tabs.onRemoved.addListener((id) => {
   if (id === helperTab) helperTab = null;
 });
 
@@ -165,7 +211,7 @@ async function tabFetch(url, init) {
   const tabs = await instagramTabs();
   for (const tab of tabs) {
     try {
-      const [{ result }] = await chrome.scripting.executeScript({
+      const [{ result }] = await ext.scripting.executeScript({
         target: { tabId: tab.id },
         world: 'MAIN',
         func: async (u, i) => {
@@ -194,7 +240,7 @@ async function tabFetch(url, init) {
 // The first successful request afterwards resets it.
 
 async function getRateLimit() {
-  return (await chrome.storage.local.get(RATE_KEY))[RATE_KEY] || null;
+  return (await ext.storage.local.get(RATE_KEY))[RATE_KEY] || null;
 }
 
 async function activeCooldown() {
@@ -206,7 +252,7 @@ async function startCooldown() {
   const prev = await getRateLimit();
   const strikes = (prev?.strikes || 0) + 1;
   const until = Date.now() + Math.min(COOLDOWN_BASE * 2 ** (strikes - 1), COOLDOWN_MAX);
-  await chrome.storage.local.set({ [RATE_KEY]: { strikes, until } });
+  await ext.storage.local.set({ [RATE_KEY]: { strikes, until } });
   return until;
 }
 
@@ -277,7 +323,7 @@ async function igRequest(path, { method = 'GET', form, ignoreCooldown = false, s
   const message = data?.message || '';
   const slowDown = /wait a few minutes|rate limit/i.test(message);
   if (res.status >= 400 || slowDown) {
-    await chrome.storage.local.set({ lastRefusal: { status: res.status, message: message.slice(0, 160), via: res.via, path: path.split('?')[0], at: Date.now() } });
+    await ext.storage.local.set({ lastRefusal: { status: res.status, message: message.slice(0, 160), via: res.via, path: path.split('?')[0], at: Date.now() } });
   }
   // Only a real limit starts the pause: HTTP 429, or "please wait" from the site
   // itself. Instagram also says "please wait" to background requests it doesn't
@@ -306,7 +352,7 @@ async function igRequest(path, { method = 'GET', form, ignoreCooldown = false, s
   if (res.status >= 400 || data.status === 'fail') {
     throw new IgError('API', message || `Instagram returned HTTP ${res.status}.`);
   }
-  if (limit) await chrome.storage.local.remove(RATE_KEY);
+  if (limit) await ext.storage.local.remove(RATE_KEY);
   return data;
 }
 
@@ -375,13 +421,13 @@ async function fetchProfile(userId, username) {
 
 async function getLiveCounts(userId, { force = false } = {}) {
   const key = liveKey(userId);
-  const cached = (await chrome.storage.local.get(key))[key];
+  const cached = (await ext.storage.local.get(key))[key];
   if (!force && cached && Date.now() - cached.at < LIVE_TTL) return cached;
   const acct = await getAcct(userId);
   const profile = await fetchProfile(userId, acct?.username);
   if (profile?.followers == null) return cached || null; // counts unavailable right now
   const live = { ...profile, at: Date.now() };
-  await chrome.storage.local.set({ [key]: live });
+  await ext.storage.local.set({ [key]: live });
   return live;
 }
 
@@ -457,7 +503,7 @@ function scan() {
 }
 
 async function setProgress(progress) {
-  await chrome.storage.local.set({ progress });
+  await ext.storage.local.set({ progress });
 }
 
 // A truncated list would look like a wave of unfollows, so refuse to commit it.
@@ -472,19 +518,19 @@ function assertComplete(label, got, expected) {
 
 async function runScan() {
   // Extension API calls keep the service worker alive during long scans.
-  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20_000);
+  const keepAlive = setInterval(() => ext.runtime.getPlatformInfo(), 20_000);
   const startedAt = Date.now();
   const report = (p) => setProgress({ running: true, startedAt, ...p });
 
   try {
     const { userId } = await getSession();
-    await chrome.storage.local.set({ activeUser: userId });
+    await ext.storage.local.set({ activeUser: userId });
     const prev = await getAcct(userId);
 
     await report({ phase: 'profile' });
     const profile = await fetchProfile(userId, prev?.username);
     const hasCounts = profile?.followers != null;
-    if (hasCounts) await chrome.storage.local.set({ [liveKey(userId)]: { ...profile, at: Date.now() } });
+    if (hasCounts) await ext.storage.local.set({ [liveKey(userId)]: { ...profile, at: Date.now() } });
 
     const following = await fetchList(userId, 'following', (count, note) =>
       report({ phase: 'following', count, total: profile?.following, note }));
@@ -566,7 +612,7 @@ async function commitScan(userId, prev, profile, following, followers) {
     seenAt: prev?.seenAt ?? now,
   };
   pushEvents(acct, events);
-  await chrome.storage.local.set({ [acctKey(userId)]: acct });
+  await ext.storage.local.set({ [acctKey(userId)]: acct });
   return { lost, gained };
 }
 
@@ -627,16 +673,16 @@ const QUEUE_SCAN_MAX_AGE = 24 * 60 * 60 * 1000;
 const dayKey = (t = Date.now()) => new Date(t).toDateString();
 
 async function getQueue() {
-  return (await chrome.storage.local.get(QUEUE_KEY))[QUEUE_KEY] || null;
+  return (await ext.storage.local.get(QUEUE_KEY))[QUEUE_KEY] || null;
 }
 
 async function setQueue(q) {
-  if (q) await chrome.storage.local.set({ [QUEUE_KEY]: q });
-  else await chrome.storage.local.remove(QUEUE_KEY);
+  if (q) await ext.storage.local.set({ [QUEUE_KEY]: q });
+  else await ext.storage.local.remove(QUEUE_KEY);
 }
 
 function scheduleQueue(at) {
-  chrome.alarms.create(QUEUE_ALARM, { when: Math.max(at, Date.now() + 1000) });
+  ext.alarms.create(QUEUE_ALARM, { when: Math.max(at, Date.now() + 1000) });
 }
 
 async function startUnfollowAll(ids) {
@@ -657,7 +703,7 @@ async function startUnfollowAll(ids) {
 }
 
 async function stopUnfollowAll() {
-  await chrome.alarms.clear(QUEUE_ALARM);
+  await ext.alarms.clear(QUEUE_ALARM);
   await setQueue(null);
   return true;
 }
@@ -668,7 +714,7 @@ async function pauseUnfollowAll(paused) {
   q.paused = paused ? { reason: 'user', message: 'Paused.' } : null;
   q.nextAt = Date.now();
   await setQueue(q);
-  if (paused) await chrome.alarms.clear(QUEUE_ALARM);
+  if (paused) await ext.alarms.clear(QUEUE_ALARM);
   else queueTick();
   return q;
 }
@@ -750,14 +796,14 @@ async function waitQueue(q, until, why) {
 async function pauseQueue(q, reason, message) {
   q.paused = { reason, message };
   await setQueue(q);
-  await chrome.alarms.clear(QUEUE_ALARM);
-  chrome.notifications.create(`queue:${Date.now()}`, { type: 'basic', iconUrl: ICON, title: 'Unfollow all paused', message, priority: 1 });
+  await ext.alarms.clear(QUEUE_ALARM);
+  showNotification(`queue:${Date.now()}`, { type: 'basic', iconUrl: ICON, title: 'Unfollow all paused', message, priority: 1 });
 }
 
 async function finishQueue(q) {
   await setQueue(null);
-  await chrome.alarms.clear(QUEUE_ALARM);
-  chrome.notifications.create(`queue:${Date.now()}`, {
+  await ext.alarms.clear(QUEUE_ALARM);
+  showNotification(`queue:${Date.now()}`, {
     type: 'basic', iconUrl: ICON, title: 'Unfollow all finished',
     message: `Unfollowed ${fmt(q.done)} account${q.done === 1 ? '' : 's'}.${q.skipped ? ` Skipped ${fmt(q.skipped)} who followed you back or were already unfollowed.` : ''}${q.failed ? ` ${fmt(q.failed)} failed.` : ''}`,
   });
@@ -784,16 +830,16 @@ async function follow(id) {
 }
 
 async function markSeen() {
-  const { activeUser } = await chrome.storage.local.get('activeUser');
+  const { activeUser } = await ext.storage.local.get('activeUser');
   if (activeUser) await mutateAcct(activeUser, (a) => (a.seenAt = Date.now()));
   await updateBadge();
   return true;
 }
 
 async function resetData() {
-  const { activeUser } = await chrome.storage.local.get('activeUser');
-  if (activeUser) await chrome.storage.local.remove([acctKey(activeUser), liveKey(activeUser), importKey(activeUser)]);
-  await chrome.storage.local.remove('progress');
+  const { activeUser } = await ext.storage.local.get('activeUser');
+  if (activeUser) await ext.storage.local.remove([acctKey(activeUser), liveKey(activeUser), importKey(activeUser)]);
+  await ext.storage.local.remove('progress');
   await updateBadge();
   return true;
 }
@@ -806,7 +852,7 @@ async function resetData() {
 async function saveImport(data) {
   const { userId } = await getSession();
   const key = importKey(userId);
-  const prev = (await chrome.storage.local.get(key))[key] || null;
+  const prev = (await ext.storage.local.get(key))[key] || null;
   const incoming = { usernames: data.usernames.map(String).slice(0, 200_000), asOf: Number(data.asOf) || Date.now() };
   const base = prev && prev.asOf <= incoming.asOf ? prev : incoming;
   const followedAt = { ...(prev?.followedAt || {}) };
@@ -822,13 +868,13 @@ async function saveImport(data) {
     importedAt: Date.now(),
     keptOlder: base === prev,
   };
-  await chrome.storage.local.set({ [key]: imported });
+  await ext.storage.local.set({ [key]: imported });
   return imported;
 }
 
 async function removeImport() {
   const { userId } = await getSession();
-  await chrome.storage.local.remove(importKey(userId));
+  await ext.storage.local.remove(importKey(userId));
   return true;
 }
 
@@ -839,9 +885,9 @@ async function getState() {
   } catch {
     // not logged in
   }
-  const stored = await chrome.storage.local.get(['activeUser', 'progress', 'settings']);
+  const stored = await ext.storage.local.get(['activeUser', 'progress', 'settings']);
   if (loggedInId && loggedInId !== stored.activeUser) {
-    await chrome.storage.local.set({ activeUser: loggedInId });
+    await ext.storage.local.set({ activeUser: loggedInId });
     await updateBadge();
   }
   const id = loggedInId || stored.activeUser;
@@ -851,17 +897,17 @@ async function getState() {
     progress = { running: false, error: 'The last scan was interrupted. Run it again.' };
     await setProgress(progress);
   }
-  const live = id ? (await chrome.storage.local.get(liveKey(id)))[liveKey(id)] || null : null;
+  const live = id ? (await ext.storage.local.get(liveKey(id)))[liveKey(id)] || null : null;
   return {
     loggedInId,
     acct: id ? await getAcct(id) : null,
     live,
-    imported: id ? (await chrome.storage.local.get(importKey(id)))[importKey(id)] || null : null,
+    imported: id ? (await ext.storage.local.get(importKey(id)))[importKey(id)] || null : null,
     progress,
     cooldownUntil: (await activeCooldown())?.until || null,
     scanLock: await scanLock(id),
     queue: await getQueue(),
-    lastRefusal: (await chrome.storage.local.get('lastRefusal')).lastRefusal || null,
+    lastRefusal: (await ext.storage.local.get('lastRefusal')).lastRefusal || null,
     settings: { ...DEFAULT_SETTINGS, ...stored.settings },
   };
 }
@@ -869,6 +915,17 @@ async function getState() {
 // ---------------------------------------------------------------- notifications & badge
 
 const ICON = 'icons/icon128.png';
+
+// notifications.create, minus the options Firefox doesn't support.
+function showNotification(id, options) {
+  if (typeof id === 'object') [id, options] = [undefined, id];
+  const opts = { ...options };
+  if (!NOTIFICATION_BUTTONS) {
+    delete opts.buttons;
+    delete opts.priority;
+  }
+  return id ? ext.notifications.create(id, opts) : ext.notifications.create(opts);
+}
 
 function listNames(list) {
   const names = list.slice(0, 4).map((u) => '@' + u.u).join(', ');
@@ -881,17 +938,18 @@ async function notify(lost, gained) {
     const [u] = lost;
     const buttons = [{ title: 'View profile' }];
     if (u.stillFollowing) buttons.unshift({ title: 'Unfollow' });
-    chrome.notifications.create(`lost:${u.id}:${u.u}:${u.stillFollowing ? 1 : 0}`, {
+    showNotification(`lost:${u.id}:${u.u}:${u.stillFollowing ? 1 : 0}`, {
       type: 'basic',
       iconUrl: ICON,
       title: `@${u.u} unfollowed you`,
-      message: u.stillFollowing ? 'You still follow them.' : "You don't follow them.",
+      message: (u.stillFollowing ? 'You still follow them.' : "You don't follow them.") +
+        (NOTIFICATION_BUTTONS ? '' : ' Click to open Unfollow Watch.'),
       buttons,
       priority: 1,
     });
   } else if (settings.notifyLost && lost.length > 1) {
     const still = lost.filter((u) => u.stillFollowing).length;
-    chrome.notifications.create(`many:${Date.now()}`, {
+    showNotification(`many:${Date.now()}`, {
       type: 'basic',
       iconUrl: ICON,
       title: `${lost.length} people unfollowed you`,
@@ -900,7 +958,7 @@ async function notify(lost, gained) {
     });
   }
   if (settings.notifyGained && gained.length) {
-    chrome.notifications.create(`gained:${Date.now()}`, {
+    showNotification(`gained:${Date.now()}`, {
       type: 'basic',
       iconUrl: ICON,
       title: gained.length === 1 ? `@${gained[0].u} followed you` : `${gained.length} new followers`,
@@ -909,54 +967,54 @@ async function notify(lost, gained) {
   }
 }
 
-chrome.notifications.onClicked.addListener((nid) => {
-  chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
-  chrome.notifications.clear(nid);
+ext.notifications.onClicked.addListener((nid) => {
+  ext.tabs.create({ url: ext.runtime.getURL('popup.html') });
+  ext.notifications.clear(nid);
 });
 
-chrome.notifications.onButtonClicked.addListener(async (nid, index) => {
+ext.notifications.onButtonClicked?.addListener(async (nid, index) => {
   if (!nid.startsWith('lost:')) return;
   const [, id, username, still] = nid.split(':');
-  chrome.notifications.clear(nid);
+  ext.notifications.clear(nid);
   const profileIndex = still === '1' ? 1 : 0;
   if (index === profileIndex) {
-    chrome.tabs.create({ url: `${IG}/${username}/` });
+    ext.tabs.create({ url: `${IG}/${username}/` });
     return;
   }
   try {
     await unfollow(id);
-    chrome.notifications.create({ type: 'basic', iconUrl: ICON, title: `Unfollowed @${username}`, message: 'Removed from your following.' });
+    showNotification({ type: 'basic', iconUrl: ICON, title: `Unfollowed @${username}`, message: 'Removed from your following.' });
   } catch (e) {
-    chrome.notifications.create({ type: 'basic', iconUrl: ICON, title: `Couldn't unfollow @${username}`, message: e.message });
+    showNotification({ type: 'basic', iconUrl: ICON, title: `Couldn't unfollow @${username}`, message: e.message });
   }
 });
 
 // Badge = unfollows you haven't looked at yet.
 async function updateBadge() {
-  const { activeUser } = await chrome.storage.local.get('activeUser');
+  const { activeUser } = await ext.storage.local.get('activeUser');
   const acct = activeUser ? await getAcct(activeUser) : null;
   const n = acct ? (acct.events || []).filter((e) => e.t === 'lost' && e.at > acct.seenAt).length : 0;
-  await chrome.action.setBadgeBackgroundColor({ color: '#ed4956' });
-  await chrome.action.setBadgeTextColor?.({ color: '#ffffff' });
-  await chrome.action.setBadgeText({ text: n ? (n > 99 ? '99+' : String(n)) : '' });
+  await action.setBadgeBackgroundColor({ color: '#ed4956' });
+  await action.setBadgeTextColor?.({ color: '#ffffff' });
+  await action.setBadgeText({ text: n ? (n > 99 ? '99+' : String(n)) : '' });
 }
 
 // ---------------------------------------------------------------- wiring
 
-chrome.runtime.onInstalled.addListener(() => {
+ext.runtime.onInstalled.addListener(() => {
   // Installing or updating starts without a rate-limit pause.
-  chrome.storage.local.remove([RATE_KEY, 'lastRefusal']);
+  ext.storage.local.remove([RATE_KEY, 'lastRefusal']);
   scheduleCheck();
   updateBadge();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+ext.runtime.onStartup.addListener(() => {
   scheduleCheck();
   updateBadge();
   queueTick(); // pick up an unfinished "Unfollow all"
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+ext.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CHECK_ALARM) backgroundCheck();
   if (alarm.name === QUEUE_ALARM) queueTick();
 });
@@ -971,7 +1029,7 @@ async function userAction(fn) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+ext.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const handlers = {
     state: getState,
     scan: () => userAction(scan),

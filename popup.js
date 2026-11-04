@@ -1,5 +1,7 @@
+// Firefox exposes the extension API as `browser`, Chrome as `chrome`.
+const ext = globalThis.browser ?? globalThis.chrome;
 const $ = (sel) => document.querySelector(sel);
-const send = (type, extra = {}) => chrome.runtime.sendMessage({ type, ...extra });
+const send = (type, extra = {}) => ext.runtime.sendMessage({ type, ...extra });
 
 const CHUNK = 60;
 const DAY = 24 * 60 * 60 * 1000;
@@ -94,6 +96,22 @@ function sinceText(since) {
 
 const longDate = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const shortDate = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+// In-page confirmation; Firefox doesn't show window.confirm() in toolbar popups.
+// Resolves true only when the confirm button is pressed (Esc and Cancel → false).
+function ask({ title, body = [], ok, danger = false }) {
+  const dialog = $('#dialog');
+  dialog.replaceChildren(
+    el('h2', {}, title),
+    ...body.map((p) => el('p', {}, p)),
+    el('div', { class: 'dialog-actions' },
+      el('button', { class: 'btn', onclick: () => dialog.close('cancel') }, 'Cancel'),
+      el('button', { class: `btn ${danger ? 'confirm' : 'primary'}`, onclick: () => dialog.close('ok') }, ok)),
+  );
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true }));
+}
 
 function toast(msg) {
   const t = $('#toast');
@@ -706,11 +724,15 @@ async function startBulk() {
   const duration = days > 1
     ? `All ${fmt(n)} will take about ${days} days.`
     : `This takes about ${Math.max(1, Math.round((n * AVG_GAP_SEC) / 60))} minutes.`;
-  const ok = confirm(
-    `Unfollow all ${fmt(n)} accounts that don't follow you back?\n\n` +
-    `Instagram blocks accounts that unfollow too fast, so this runs slowly in the background: about one account a minute, at most ${UNFOLLOW_PER_DAY} a day. ${duration} Chrome needs to stay open.\n\n` +
-    'Anyone who follows you back before their turn is skipped. You can pause or stop at any time.',
-  );
+  const ok = await ask({
+    title: `Unfollow all ${fmt(n)} accounts that don't follow you back?`,
+    body: [
+      `Instagram blocks accounts that unfollow too fast, so this runs slowly in the background: about one account a minute, at most ${UNFOLLOW_PER_DAY} a day. ${duration} Your browser needs to stay open.`,
+      'Anyone who follows you back before their turn is skipped. You can pause or stop at any time.',
+    ],
+    ok: `Unfollow all ${fmt(n)}`,
+    danger: true,
+  });
   if (!ok) return;
   const res = await send('unfollowAll', { ids: list.map((u) => u.id) });
   if (!res?.ok) {
@@ -722,7 +744,7 @@ async function startBulk() {
 }
 
 async function stopBulk() {
-  if (!confirm('Stop Unfollow all? Accounts already unfollowed stay unfollowed.')) return;
+  if (!(await ask({ title: 'Stop Unfollow all?', body: ['Accounts already unfollowed stay unfollowed.'], ok: 'Stop', danger: true }))) return;
   await send('stopUnfollowAll');
   refresh();
 }
@@ -732,8 +754,8 @@ async function stopBulk() {
 // The file picker closes the toolbar popup on some systems, so the import
 // runs from the same page opened in a full tab.
 async function startImport() {
-  if (!(await chrome.tabs.getCurrent())) {
-    chrome.tabs.create({ url: chrome.runtime.getURL('popup.html#import') });
+  if (!(await ext.tabs.getCurrent())) {
+    ext.tabs.create({ url: ext.runtime.getURL('popup.html#import') });
     window.close();
     return;
   }
@@ -757,7 +779,11 @@ $('#importFile').addEventListener('change', async (e) => {
   if (hasBaseline() && result.usernames.length > 20) {
     const current = new Set(Object.values(derived.followers).map((u) => u.u.toLowerCase()));
     const share = result.usernames.filter((n) => current.has(n)).length / result.usernames.length;
-    if (share < 0.2 && !confirm(`Only ${Math.round(share * 100)}% of the accounts in this download follow you now. It may be from a different Instagram account. Import it anyway?`)) return;
+    if (share < 0.2 && !(await ask({
+      title: 'Import this download anyway?',
+      body: [`Only ${Math.round(share * 100)}% of the accounts in this download follow you now. It may be from a different Instagram account.`],
+      ok: 'Import',
+    }))) return;
   }
 
   const res = await send('saveImport', { data: result });
@@ -793,7 +819,7 @@ function renderImportSetting() {
 
 $('#importBtn').addEventListener('click', startImport);
 $('#removeImportBtn').addEventListener('click', async () => {
-  if (!confirm('Remove the imported data download?')) return;
+  if (!(await ask({ title: 'Remove the imported data download?', ok: 'Remove', danger: true }))) return;
   await send('removeImport');
   state.imported = null;
   derived = derive(state.acct, null);
@@ -907,13 +933,18 @@ $('#notifyLost').addEventListener('change', (e) => saveSetting({ notifyLost: e.t
 $('#notifyGained').addEventListener('change', (e) => saveSetting({ notifyGained: e.target.checked }));
 
 $('#resetBtn').addEventListener('click', async () => {
-  if (!confirm('Delete the saved lists and history for this account?')) return;
+  if (!(await ask({
+    title: 'Clear saved data?',
+    body: ['This deletes the saved lists and history for this account. The next scan starts a new baseline.'],
+    ok: 'Clear',
+    danger: true,
+  }))) return;
   await send('reset');
   $('#settingsBtn').click();
   refresh();
 });
 
-chrome.storage.onChanged.addListener((changes) => {
+ext.storage.onChanged.addListener((changes) => {
   if (!state) return;
   if (changes.progress) {
     const wasRunning = scanning();

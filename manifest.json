@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unfollow Watch for Instagram",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Get notified when someone you follow back unfollows you on Instagram, and unfollow them in one click.",
   "permissions": [
     "storage",
