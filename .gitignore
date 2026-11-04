@@ -1,0 +1,14 @@
+# macOS archive leftovers
+__MACOSX/
+.DS_Store
+
+# Packaged builds
+dist/
+*.zip
+*.crx
+*.pem
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
