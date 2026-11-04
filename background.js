@@ -36,8 +36,6 @@ class IgError extends Error {
   }
 }
 
-const isFatal = (e) => e.code === 'NOT_LOGGED_IN' || e.code === 'RATE_LIMIT';
-
 // ---------------------------------------------------------------- storage
 
 async function getSettings() {
@@ -54,18 +52,7 @@ async function saveSettings(next) {
 
 async function getAcct(userId) {
   const key = acctKey(userId);
-  const acct = (await chrome.storage.local.get(key))[key] || null;
-  return acct && acct.v === 2 ? acct : migrate(acct);
-}
-
-// v1 only tracked mutuals; keep its detected unfollowers as history and
-// start a fresh baseline on the next scan.
-function migrate(old) {
-  if (!old) return null;
-  const events = Object.entries(old.unfollowers || {}).map(([id, u]) => ({
-    t: 'lost', id, u: u.u, n: u.n, p: u.p, v: u.v, at: u.at || old.lastScan,
-  }));
-  return { v: 2, userId: old.userId, username: old.username, pic: old.pic, events, seenAt: Date.now() };
+  return (await chrome.storage.local.get(key))[key] || null;
 }
 
 async function mutateAcct(userId, fn) {
@@ -531,11 +518,7 @@ async function commitScan(userId, prev, profile, following, followers) {
 
   if (prev?.followers && prev?.following) {
     const add = (t, id, u) => events.push({ t, id, u: u.u, n: u.n, p: u.p, v: u.v, at: now });
-    // Following lists saved before the date-sorted fix were missing accounts, so
-    // the first scan after it updates the list quietly instead of reporting
-    // hundreds of "you followed" changes.
-    const trustFollowing = !!prev.followingComplete;
-    const goneFromFollowing = new Set(trustFollowing ? Object.keys(prev.following).filter((id) => !following[id]) : []);
+    const goneFromFollowing = new Set(Object.keys(prev.following).filter((id) => !following[id]));
 
     for (const [id, u] of Object.entries(prev.followers)) {
       if (followers[id]) continue;
@@ -555,7 +538,7 @@ async function commitScan(userId, prev, profile, following, followers) {
       add('gained', id, u);
       gained.push({ id, ...u });
     }
-    for (const [id, u] of Object.entries(trustFollowing ? following : {})) {
+    for (const [id, u] of Object.entries(following)) {
       if (!prev.following[id]) {
         add('followed', id, u);
         delta.followed++;
@@ -570,8 +553,6 @@ async function commitScan(userId, prev, profile, following, followers) {
   }
 
   const acct = {
-    v: 2,
-    followingComplete: true,
     userId,
     username: profile?.username || prev?.username || '',
     pic: profile?.pic || prev?.pic || '',
@@ -662,14 +643,14 @@ async function startUnfollowAll(ids) {
   const { userId } = await getSession();
   if (await getQueue()) throw new IgError('BUSY', 'Unfollow all is already running.');
   const acct = await getAcct(userId);
-  if (!acct?.followingComplete) throw new IgError('STALE', 'Run a scan first, so the list is complete.');
+  if (!acct?.followers) throw new IgError('STALE', 'Run a scan first.');
   if (Date.now() - acct.lastScan > QUEUE_SCAN_MAX_AGE) throw new IgError('STALE', 'Your last scan is more than a day old. Run a scan first, so nobody who followed you back gets unfollowed.');
   // Only accounts that, per the latest scan, you follow and that don't follow you.
   const items = [...new Set(ids.map(String))]
     .filter((id) => acct.following[id] && !acct.followers[id])
     .map((id) => ({ id, u: acct.following[id].u }));
   if (!items.length) throw new IgError('EMPTY', 'Nobody to unfollow.');
-  const q = { userId, items, total: items.length, done: 0, skipped: 0, failed: 0, startedAt: Date.now(), nextAt: Date.now(), today: { day: dayKey(), count: 0 }, paused: null, wait: null };
+  const q = { userId, items, total: items.length, done: 0, skipped: 0, failed: 0, nextAt: Date.now(), today: { day: dayKey(), count: 0 }, paused: null, wait: null };
   await setQueue(q);
   queueTick();
   return q;
@@ -736,7 +717,6 @@ async function queueTick() {
       q.items.shift();
       q.done++;
       q.today.count++;
-      q.lastError = null;
       q.failStreak = 0;
     } catch (e) {
       if (e.code === 'RATE_LIMIT') return void (await waitQueue(q, ((await activeCooldown())?.until || now + COOLDOWN_BASE) + jitter(30_000, 120_000), 'limit'));
@@ -746,7 +726,6 @@ async function queueTick() {
       // means something is wrong for every account, so stop instead of
       // marking the whole list as failed.
       q.failStreak = (q.failStreak || 0) + 1;
-      q.lastError = `@${item.u}: ${e.message}`;
       if (q.failStreak >= 2) return void (await pauseQueue(q, 'error', `Two unfollows in a row failed. Last error: ${e.message}`));
       q.items.shift();
       q.failed++;
@@ -883,7 +862,6 @@ async function getState() {
     scanLock: await scanLock(id),
     queue: await getQueue(),
     lastRefusal: (await chrome.storage.local.get('lastRefusal')).lastRefusal || null,
-    igTabOpen: (await chrome.tabs.query({ url: 'https://www.instagram.com/*' })).length > 0,
     settings: { ...DEFAULT_SETTINGS, ...stored.settings },
   };
 }
@@ -966,8 +944,7 @@ async function updateBadge() {
 // ---------------------------------------------------------------- wiring
 
 chrome.runtime.onInstalled.addListener(() => {
-  // A fresh install or reload starts without a pause: earlier versions could
-  // pause on refusals that weren't real rate limits.
+  // Installing or updating starts without a rate-limit pause.
   chrome.storage.local.remove([RATE_KEY, 'lastRefusal']);
   scheduleCheck();
   updateBadge();

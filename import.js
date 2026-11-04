@@ -160,5 +160,3 @@ async function readEntry(file, offset, csize, method) {
   if (method === 8) return new Response(blob.stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
   throw new Error('The zip uses a compression method this extension can’t read. Unzip it and pick followers_1.json instead.');
 }
-
-if (typeof module !== 'undefined') module.exports = { readInstagramExport };

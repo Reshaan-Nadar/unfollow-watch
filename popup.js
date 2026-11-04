@@ -692,9 +692,7 @@ function renderBulk() {
     return;
   }
   const acct = state.acct;
-  const why = !acct?.followingComplete
-    ? 'Scan once more first: your saved following list is from before the fix and is incomplete.'
-    : Date.now() - acct.lastScan > DAY ? 'Your last scan is over a day old. Scan again first.' : null;
+  const why = Date.now() - acct.lastScan > DAY ? 'Your last scan is over a day old. Scan again first.' : null;
   bar.replaceChildren(
     el('div', { class: 'grow bulk-sub' }, why || `${fmt(n)} accounts you follow don't follow you back.`),
     el('button', { class: 'btn small danger-text', disabled: !!why || scanning(), onclick: startBulk }, `Unfollow all ${fmt(n)}`),
