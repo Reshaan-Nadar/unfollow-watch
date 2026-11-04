@@ -18,6 +18,8 @@ Instagram only shows your follower *count*. When it drops from 3,000 to 2,996 th
 
 - [Features](#features)
 - [Installation](#installation)
+  - [Supported browsers](#supported-browsers): Chrome, Edge, Brave, Opera, Vivaldi
+  - [Firefox, Safari and phones](#firefox-safari-and-phones)
 - [Getting started](#getting-started)
 - [How it works](#how-it-works)
 - [Why a scan takes several minutes and takes breaks](#why-a-scan-takes-several-minutes-and-takes-breaks)
@@ -76,11 +78,26 @@ Import Instagram's own data download to see **the exact date each follower follo
 
 ## Installation
 
-The extension isn't on the Chrome Web Store. You install it directly from this repository. It takes about a minute.
+The extension isn't on any extension store. You install it directly from this repository. It takes about a minute.
 
-It works in **Google Chrome**, **Microsoft Edge**, **Brave** and other Chromium browsers.
+### Supported browsers
 
-### 1. Download the code
+| Browser | Supported | Extensions page |
+| --- | :---: | --- |
+| Google Chrome | ✅ | `chrome://extensions` |
+| Microsoft Edge | ✅ | `edge://extensions` |
+| Brave | ✅ | `brave://extensions` |
+| Opera / Opera GX | ✅ | `opera://extensions` |
+| Vivaldi | ✅ | `vivaldi://extensions` |
+| Firefox | ❌ | [Why not?](#firefox-safari-and-phones) |
+| Safari | ❌ | [Why not?](#firefox-safari-and-phones) |
+| Android / iPhone | ❌ | [Why not?](#firefox-safari-and-phones) |
+
+Unfollow Watch is developed and tested in Chrome. Edge, Brave, Opera and Vivaldi are built on Chromium, the same engine as Chrome, and run Chrome extensions the same way.
+
+Installing has three steps: [download the files](#1-download-the-files), [load them into your browser](#2-load-it-into-your-browser), and [log in to Instagram](#3-log-in-to-instagram).
+
+### 1. Download the files
 
 **Option A: download the release (recommended, no tools needed)**
 1. Open the [latest release](https://github.com/Reshaan-Nadar/unfollow-watch/releases/latest) and download `unfollow-watch-<version>.zip` under **Assets**.
@@ -94,27 +111,107 @@ git clone https://github.com/Reshaan-Nadar/unfollow-watch.git
 
 ### 2. Load it into your browser
 
-1. Open the extensions page:
-   - Chrome: `chrome://extensions`
-   - Edge: `edge://extensions`
-   - Brave: `brave://extensions`
-2. Turn on **Developer mode** (a toggle in the top-right corner, or the left sidebar in Edge).
-3. Click **Load unpacked**.
-4. Select the folder that contains `manifest.json`. If you downloaded the release, it's the extracted `unfollow-watch-<version>` folder.
-5. Click the puzzle-piece icon in the toolbar and **pin** Unfollow Watch so it's always visible.
+Every supported browser works the same way: open the extensions page, turn on **Developer mode**, click **Load unpacked**, and pick the folder. Only the button locations differ. Open the section for your browser:
+
+<details>
+<summary><b>Google Chrome</b></summary>
+
+1. Type `chrome://extensions` in the address bar and press Enter.
+   (Or: menu **⋮ → Extensions → Manage Extensions**.)
+2. Turn on **Developer mode** with the toggle in the **top-right** corner.
+3. Click **Load unpacked** (top-left).
+4. Select the extracted `unfollow-watch-<version>` folder (the one containing `manifest.json`) and click **Select Folder**.
+5. **Pin it:** click the puzzle-piece icon 🧩 in the toolbar, then the pin icon next to **Unfollow Watch**.
+
+Chrome may sometimes show a banner about extensions in developer mode. That's normal for extensions installed this way; close it and keep the extension on.
+
+</details>
+
+<details>
+<summary><b>Microsoft Edge</b></summary>
+
+1. Type `edge://extensions` in the address bar and press Enter.
+   (Or: menu **⋯ → Extensions → Manage extensions**.)
+2. Turn on **Developer mode** with the toggle in the **left sidebar**. If the window is narrow, open the sidebar with the ☰ button first.
+3. Click **Load unpacked**, which appears at the top once developer mode is on.
+4. Select the extracted `unfollow-watch-<version>` folder (the one containing `manifest.json`) and click **Select Folder**.
+5. **Pin it:** click the puzzle-piece **Extensions** icon in the toolbar, then the eye icon (**Show in toolbar**) next to **Unfollow Watch**.
+
+When Edge starts, it may show **"Turn off extensions in developer mode"**. Close that message with **✕**. Don't click *Turn off extensions*, or Unfollow Watch will be disabled.
+
+</details>
+
+<details>
+<summary><b>Brave</b></summary>
+
+1. Type `brave://extensions` in the address bar and press Enter.
+   (Or: menu **≡ → Extensions**.)
+2. Turn on **Developer mode** with the toggle in the **top-right** corner.
+3. Click **Load unpacked** (top-left).
+4. Select the extracted `unfollow-watch-<version>` folder (the one containing `manifest.json`) and click **Select Folder**.
+5. **Pin it:** click the puzzle-piece icon in the toolbar, then the pin icon next to **Unfollow Watch**.
+
+Brave Shields don't affect the extension, so you don't need to change any Shields settings.
+
+</details>
+
+<details>
+<summary><b>Opera / Opera GX</b></summary>
+
+1. Type `opera://extensions` in the address bar and press Enter, or press **Ctrl+Shift+E** (**⌘+Shift+E** on Mac).
+2. Turn on **Developer mode** with the toggle in the **top-right** corner.
+3. Click **Load unpacked** (top-left).
+4. Select the extracted `unfollow-watch-<version>` folder (the one containing `manifest.json`) and click **Select Folder**.
+5. **Pin it:** click the cube-shaped **Extensions** icon in the toolbar, then the pin icon next to **Unfollow Watch**.
+
+</details>
+
+<details>
+<summary><b>Vivaldi</b></summary>
+
+1. Type `vivaldi://extensions` in the address bar and press Enter.
+   (Or: menu **Tools → Extensions**.)
+2. Turn on **Developer mode** with the toggle in the **top-right** corner.
+3. Click **Load unpacked** (top-left).
+4. Select the extracted `unfollow-watch-<version>` folder (the one containing `manifest.json`) and click **Select Folder**.
+5. The Unfollow Watch icon appears at the right end of the address bar. If you don't see it, click the extensions (puzzle-piece) button there and make it visible.
+
+</details>
 
 ### 3. Log in to Instagram
 
-Open <https://www.instagram.com> in the **same browser** and log in. The extension uses this login and never asks for your password.
+Open <https://www.instagram.com> in the **same browser** and log in. The extension uses this login and never asks for your password. If you use several browsers, each one needs its own login, and each keeps its own separate history.
+
+**Allow notifications.** The first unfollow alert relies on your operating system allowing notifications from your browser:
+- **Windows:** Settings → System → Notifications → turn on your browser. *Do not disturb* or *Focus* hides them.
+- **macOS:** System Settings → Notifications → your browser → turn on *Allow notifications*.
 
 ### Updating
 
-- **Release ZIP:** download the newest release and replace the files in your folder with the new ones.
-- **Git:** run `git pull` in the folder.
+1. Get the new version:
+   - **Release ZIP:** download the newest release and replace the files in your folder with the new ones. Keep the same folder.
+   - **Git:** run `git pull` in the folder.
+2. Open your browser's extensions page (see the table above) and click the **reload** icon (↻) on the Unfollow Watch card.
 
-Then open `chrome://extensions` and click the **reload** icon (↻) on the Unfollow Watch card. Your saved lists and history are kept.
+Your saved lists and history are kept, because they're stored in the browser, not in the folder.
 
-> Chrome may sometimes show a banner about extensions in developer mode. That's normal for extensions installed this way. Dismiss it, and keep the extension enabled.
+### Uninstalling
+
+Open your browser's extensions page and click **Remove** on the Unfollow Watch card. This also deletes all its saved data. Then you can delete the folder.
+
+### Firefox, Safari and phones
+
+**Firefox isn't supported.** Unfollow Watch is a Chrome-format extension, and three things stop it from running on Firefox as it is:
+
+1. **Background engine.** The extension's background work (scans, checks, *Unfollow all*) runs in a Chrome-style *service worker*. Firefox runs extension background code differently, so the extension doesn't start there.
+2. **Signing.** Firefox only keeps extensions installed permanently if Mozilla has signed them. An unsigned extension can only be loaded as a *temporary add-on* (`about:debugging`), which is removed every time Firefox closes. Only Firefox Developer Edition and Nightly can turn signing off.
+3. **Notification buttons.** Firefox notifications don't support action buttons, so the **Unfollow** button on unfollow alerts wouldn't appear.
+
+A Firefox version is possible, but it would need porting and testing. If you use Firefox, the easiest option is to install any Chromium browser above just for this.
+
+**Safari isn't supported.** Safari extensions have to be packaged as a macOS app with Apple's Xcode.
+
+**Phones aren't supported.** Instagram's apps don't allow extensions, and mobile Chrome and Safari don't run desktop extensions.
 
 ---
 
@@ -344,7 +441,10 @@ Notes:
 | **The last scan was interrupted** | Chrome closed or restarted mid-scan. Run it again. |
 | A blank instagram.com tab appeared | The extension opened it to send your scan or unfollow through instagram.com. It closes itself about a minute later. |
 | You switched Instagram accounts | Each account has its own data. *Unfollow all* pauses until you switch back. |
-| Nothing happens after updating the files | Click **reload** (↻) on the extension's card in `chrome://extensions`. |
+| Nothing happens after updating the files | Click **reload** (↻) on the extension's card on your browser's extensions page (`chrome://extensions`, `edge://extensions`, `brave://extensions`, `opera://extensions` or `vivaldi://extensions`). |
+| **Load unpacked** says *Manifest file is missing or unreadable* | You picked the wrong folder. Select the folder that directly contains `manifest.json`, not the ZIP and not a parent folder. |
+| The extension disappeared after restarting Edge | You probably clicked *Turn off extensions* on Edge's developer-mode prompt. Turn Unfollow Watch back on at `edge://extensions`. |
+| No notifications appear | Allow notifications for your browser in your operating system's settings, and check that *Do not disturb* or *Focus* is off. See [Log in to Instagram](#3-log-in-to-instagram). |
 
 ---
 
@@ -356,8 +456,14 @@ Not from scans; Instagram keeps no history of unfollows. But if you have an **ol
 **Does my computer need to stay on?**
 Chrome needs to be open for background checks and *Unfollow all* to run. If it's closed, nothing is lost; checks resume and the queue continues the next time Chrome runs.
 
+**Which browsers does it work in?**
+Chrome, Edge, Brave, Opera, Opera GX and Vivaldi. See [Supported browsers](#supported-browsers) for step-by-step instructions for each.
+
+**Does it work on Firefox?**
+Not currently. It's built in Chrome's extension format, which Firefox runs differently, and Firefox only keeps extensions permanently if Mozilla has signed them. See [Firefox, Safari and phones](#firefox-safari-and-phones).
+
 **Does it work on my phone?**
-No. Instagram's mobile apps don't support extensions, and mobile Chrome doesn't support them either.
+No. Instagram's mobile apps don't support extensions, and mobile browsers don't run desktop extensions.
 
 **Will Instagram ban me for using this?**
 The extension is built to behave like a person using instagram.com: paced requests, breaks, backing off on limits, and capped unfollows. But it does use Instagram's unofficial internal endpoints, and automated use can go against Instagram's Terms of Use. There is always some risk. See [Risks and limitations](#risks-and-limitations).
