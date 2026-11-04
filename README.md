@@ -82,9 +82,9 @@ It works in **Google Chrome**, **Microsoft Edge**, **Brave** and other Chromium 
 
 ### 1. Download the code
 
-**Option A: download a ZIP (no tools needed)**
-1. On this page, click the green **Code** button, then **Download ZIP**.
-2. Extract the ZIP to a folder you'll keep, for example `Documents\unfollow-watch`.
+**Option A: download the release (recommended, no tools needed)**
+1. Open the [latest release](https://github.com/Reshaan-Nadar/unfollow-watch/releases/latest) and download `unfollow-watch-<version>.zip` under **Assets**.
+2. Extract the ZIP to a folder you'll keep, for example `Documents`. You'll get a folder named `unfollow-watch-<version>`.
    The browser runs the extension from this folder, so don't delete or move it afterwards.
 
 **Option B: clone with Git**
@@ -100,7 +100,7 @@ git clone https://github.com/Reshaan-Nadar/unfollow-watch.git
    - Brave: `brave://extensions`
 2. Turn on **Developer mode** (a toggle in the top-right corner, or the left sidebar in Edge).
 3. Click **Load unpacked**.
-4. Select the folder that contains `manifest.json`. If you downloaded the ZIP, it's the extracted `unfollow-watch-main` folder.
+4. Select the folder that contains `manifest.json`. If you downloaded the release, it's the extracted `unfollow-watch-<version>` folder.
 5. Click the puzzle-piece icon in the toolbar and **pin** Unfollow Watch so it's always visible.
 
 ### 3. Log in to Instagram
@@ -109,7 +109,7 @@ Open <https://www.instagram.com> in the **same browser** and log in. The extensi
 
 ### Updating
 
-- **ZIP:** download the new ZIP and replace the files in your folder.
+- **Release ZIP:** download the newest release and replace the files in your folder with the new ones.
 - **Git:** run `git pull` in the folder.
 
 Then open `chrome://extensions` and click the **reload** icon (↻) on the Unfollow Watch card. Your saved lists and history are kept.
