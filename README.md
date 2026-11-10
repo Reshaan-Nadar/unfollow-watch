@@ -1,6 +1,6 @@
 # Unfollow Watch for Instagram
 
-A Chrome extension that tracks your Instagram followers and following and tells you **exactly who unfollowed you**: with dates, desktop notifications, and a one-click way to unfollow them back.
+A browser extension for Chrome, Firefox, Edge, Brave and other browsers that tracks your Instagram followers and following and tells you **exactly who unfollowed you**: with dates, desktop notifications, and a one-click way to unfollow them back.
 
 Instagram only shows your follower *count*. When it drops from 3,000 to 2,996 there's no way to see who left. Unfollow Watch saves your full followers and following lists, compares every new scan with the previous one, and keeps a dated history of every change.
 
@@ -25,6 +25,7 @@ Instagram only shows your follower *count*. When it drops from 3,000 to 2,996 th
 - [How it works](#how-it-works)
 - [Why a scan takes several minutes and takes breaks](#why-a-scan-takes-several-minutes-and-takes-breaks)
 - [Why "Unfollow all" unfollows only about one account a minute](#why-unfollow-all-unfollows-only-about-one-account-a-minute)
+- [Story polls: female / male split](#story-polls-female--male-split)
 - [Importing your Instagram data download](#importing-your-instagram-data-download)
 - [Privacy and permissions](#privacy-and-permissions)
 - [Troubleshooting](#troubleshooting)
@@ -53,6 +54,7 @@ Instagram only shows your follower *count*. When it drops from 3,000 to 2,996 th
 | **Activity** | Unfollowed you · New followers · Your changes (who *you* followed/unfollowed) · Since download |
 | **Following** | All · Unfollowed you · Don't follow back · New (last 7 days) |
 | **Followers** | All · Loyal (longest-following first) · You don't follow · New (last 7 days) |
+| **Polls** | Polls on your stories, with an estimated female / male split of the voters ([how](#story-polls-female--male-split)) |
 
 All lists are searchable by username or name. Long lists load as you scroll, so 5,000+ accounts stay fast.
 
@@ -65,6 +67,9 @@ All lists are searchable by username or name. Long lists load as you scroll, so 
 - Optional notifications for new followers.
 - The toolbar **badge** counts unfollows you haven't looked at yet.
 - **Automatic checks** in the background while your browser is open.
+
+### Story poll breakdown
+On the **Polls** tab, see roughly how many of a story poll's voters are female or male, for each option and overall (for example *65% female · 35% male, 1.8 : 1*). Instagram doesn't share anyone's gender, so this is an **estimate from first names**. See [Story polls: female / male split](#story-polls-female--male-split).
 
 ### Follow dates (optional)
 Import Instagram's own data download to see **the exact date each follower followed you**, sort followers by loyalty, and find people who unfollowed you **before you installed the extension**. See [Importing your Instagram data download](#importing-your-instagram-data-download).
@@ -420,6 +425,47 @@ To prevent mistakes, **Unfollow all** only starts from a **complete scan less th
 
 ---
 
+## Story polls: female / male split
+
+The **Polls** tab lists the polls on your active stories. For each one it estimates how many voters are female or male, for every option and for the poll as a whole.
+
+<p align="center">
+  <img src="docs/screenshots/polls.png" width="300" alt="Polls tab: estimated female / male split of a story poll's voters">
+</p>
+
+### How to use it
+
+1. Post a story with a **poll** sticker.
+2. Open Unfollow Watch, go to **Polls**, and click **Find my polls**.
+3. On the poll, click **Estimate female / male split**. The extension reads the voter list, which Instagram shows you for your own stories, with the usual pauses between pages.
+4. Click **Update** later to include new votes.
+
+Stories disappear after 24 hours, and so does the voter list. Analyze a poll before then; the result stays on the Polls tab afterwards.
+
+### How the estimate works
+
+Instagram doesn't record or share anyone's gender. Not in poll results, not in profiles, not even to the poll's owner. The extension estimates it from each voter's **first name**:
+
+1. **Find a first name.** It takes the voter's display name ("Priya Sharma 🌸" → *priya*), or, if that has none, their username ("rahul.k_99" → *rahul*, "rohitsharma07" → *rohit*). Styled letters like 𝓟𝓻𝓲𝔂𝓪 are read as plain letters, accents are dropped, and titles like *Dr.* are skipped.
+2. **Look it up.** The name is looked up in a list of about 165,000 first names, built from the [World Gender Name Dictionary 2.0](https://doi.org/10.7910/DVN/MSEGSJ) (WIPO, public domain). It covers Indian, South Asian, Middle Eastern, European and other names, based on government name records from around the world.
+3. **Count.** A name counts as female or male only if at least 85% of people with that name are. **Unisex names** (like Kiran), emoji-only names, nicknames, and names not in the list count as **unknown**. They're never guessed.
+
+Percentages and the ratio are worked out from the voters whose names were recognised. The unknown count is shown next to them, so you can see how much of the poll the estimate covers.
+
+### How accurate is it?
+
+It's an estimate, best for spotting a clear lean rather than exact numbers.
+
+- **Usually right** for common first names written in Latin letters.
+- **Unknown** for unisex names, names written only in other scripts (such as Devanagari), business or meme accounts, and rare names.
+- **Wrong** sometimes: for people whose name doesn't match their gender, people who don't identify as female or male, and accounts using someone else's name.
+
+### Privacy
+
+- Everything is worked out **inside your browser**. Names are never sent anywhere except to Instagram, which supplies them.
+- **Only totals are saved** (for example *Yes!: 81 female, 44 male, 17 unknown*). No voter is ever labelled or stored individually.
+- **Settings → Clear saved data** deletes poll results along with everything else.
+
 ## Importing your Instagram data download
 
 Instagram lets you download your own data, including **every follower with the date they followed you**. Importing it adds:
@@ -449,7 +495,7 @@ Notes:
 
 ## Privacy and permissions
 
-- **Everything stays in your browser.** Lists, history and settings are stored in `chrome.storage.local`, per Instagram account. There is no server, no analytics and no tracking.
+- **Everything stays in your browser.** Lists, history, poll results and settings are stored in `chrome.storage.local`, per Instagram account. There is no server, no analytics and no tracking.
 - **Requests go only to Instagram** (`instagram.com`, plus its image servers for profile pictures).
 - **Your password is never seen or stored.** The extension uses the login session your browser already has.
 - **Settings → Clear saved data** deletes the saved lists, history and import for the current account.
@@ -514,6 +560,9 @@ The extension is built to behave like a person using instagram.com: paced reques
 **Does it work with multiple accounts?**
 Yes. Data is stored separately for each Instagram account. It follows whichever account is logged in on instagram.com in that browser.
 
+**Can it tell me exactly how many women and men voted on my poll?**
+No. Instagram doesn't share anyone's gender. The Polls tab gives an estimate from voters' first names, and shows how many it couldn't tell. See [Story polls: female / male split](#story-polls-female--male-split).
+
 **Why is a follower's date shown as "Since before Nov 4"?**
 Without a data download, the extension only knows they were already following you at your first scan. Import a download to get exact dates.
 
@@ -530,8 +579,10 @@ Without a data download, the extension only knows they were already following yo
 ├── popup.css            Styles, light and dark mode
 ├── popup.js             Popup logic: lists, filters, search, actions, settings
 ├── import.js            Reads Instagram data downloads (zip, zip64, JSON, HTML) in the browser
+├── data/names.txt       First name → gender list for poll estimates (from WGND 2.0, public domain)
 ├── icons/               Toolbar and notification icons
 ├── scripts/build.mjs    Builds the Chrome and Firefox packages
+├── scripts/build-names.mjs  Rebuilds data/names.txt from the World Gender Name Dictionary
 └── docs/screenshots/    Images used in this README
 ```
 
@@ -555,6 +606,8 @@ It writes these to `dist/`:
 | `unfollow-watch-<version>-firefox.xpi` | Firefox release download, and the file to submit to Mozilla for signing |
 
 The Firefox package gets a Manifest V2 manifest with a persistent background page, the add-on ID `unfollow-watch@reshaan-nadar`, and a minimum version of Firefox 140. To check it with Mozilla's linter, run `npx web-ext lint --source-dir dist/firefox`.
+
+The poll name list, `data/names.txt`, is generated by `node scripts/build-names.mjs`. It downloads the World Gender Name Dictionary 2.0 sources table (about 175 MB, public domain) into `dist/` and keeps names found in counted government records. You only need it to change the list; the generated file is in the repository.
 
 To get the Firefox version signed so regular Firefox can install it permanently, submit the `.xpi` at [addons.mozilla.org/developers](https://addons.mozilla.org/developers/) and choose **On your own** (self-distribution). Mozilla signs it, usually within minutes, and you can then attach the signed `.xpi` to a release.
 

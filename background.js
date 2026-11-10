@@ -36,6 +36,7 @@ const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minut
 const acctKey = (id) => `acct:${id}`;
 const liveKey = (id) => `live:${id}`;
 const importKey = (id) => `import:${id}`;
+const pollsKey = (id) => `polls:${id}`;
 
 class IgError extends Error {
   constructor(code, message) {
@@ -838,7 +839,7 @@ async function markSeen() {
 
 async function resetData() {
   const { activeUser } = await ext.storage.local.get('activeUser');
-  if (activeUser) await ext.storage.local.remove([acctKey(activeUser), liveKey(activeUser), importKey(activeUser)]);
+  if (activeUser) await ext.storage.local.remove([acctKey(activeUser), liveKey(activeUser), importKey(activeUser), pollsKey(activeUser)]);
   await ext.storage.local.remove('progress');
   await updateBadge();
   return true;
@@ -898,11 +899,15 @@ async function getState() {
     await setProgress(progress);
   }
   const live = id ? (await ext.storage.local.get(liveKey(id)))[liveKey(id)] || null : null;
+  const pollStatus = (await ext.storage.local.get(POLL_PROGRESS_KEY))[POLL_PROGRESS_KEY] || null;
   return {
     loggedInId,
     acct: id ? await getAcct(id) : null,
     live,
     imported: id ? (await ext.storage.local.get(importKey(id)))[importKey(id)] || null : null,
+    polls: id ? (await ext.storage.local.get(pollsKey(id)))[pollsKey(id)] || null : null,
+    // While an analysis runs: its progress. Otherwise only a failure is left.
+    pollStatus: (analyzing || pollStatus?.error) ? pollStatus : null,
     progress,
     cooldownUntil: (await activeCooldown())?.until || null,
     scanLock: await scanLock(id),
@@ -910,6 +915,156 @@ async function getState() {
     lastRefusal: (await ext.storage.local.get('lastRefusal')).lastRefusal || null,
     settings: { ...DEFAULT_SETTINGS, ...stored.settings },
   };
+}
+
+// ---------------------------------------------------------------- story polls
+//
+// Instagram doesn't share anyone's gender, so the female/male split of a
+// poll's voters is an estimate from their first names (data/names.txt, built
+// from WIPO's World Gender Name Dictionary). Only totals per option are
+// stored, never a label per person.
+
+const POLL_PROGRESS_KEY = 'pollProgress';
+const NOT_NAMES = new Set(['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'sir', 'prof', 'adv', 'er', 'ca', 'the', 'its', 'im', 'iam', 'official', 'real']);
+let nameGenders = null; // name → 'F' | 'M' | 'U' (unisex)
+
+async function loadNames() {
+  if (nameGenders) return nameGenders;
+  const text = await (await fetch(ext.runtime.getURL('data/names.txt'))).text();
+  const map = new Map();
+  let gender = null;
+  for (const line of text.split('\n')) {
+    if (line === 'F' || line === 'M' || line === 'U') gender = line;
+    else if (gender && line && !line.startsWith('#')) map.set(line, gender);
+  }
+  nameGenders = map;
+  return map;
+}
+
+// "𝓟𝓻𝓲𝔂𝓪 Sharma 🌸" → ['priya', 'sharma']: styled Unicode letters fold to
+// plain ones, accents are dropped, and anything else separates words.
+function nameWords(text) {
+  return String(text || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .split(/[^a-z]+/).filter((w) => w.length >= 2 && !NOT_NAMES.has(w));
+}
+
+// 'F', 'M' or null. The full name is tried first, then the username
+// ("priya.sharma_23", or a name at the start of "priyasharma"). A unisex
+// name ends the search, so a surname after it isn't mistaken for a first name.
+function genderOf(fullName, username, names) {
+  for (const words of [nameWords(fullName), nameWords(username)]) {
+    for (const w of words.slice(0, 2)) {
+      const g = names.get(w);
+      if (g) return g === 'U' ? null : g;
+    }
+  }
+  const first = nameWords(username)[0] || '';
+  for (let len = Math.min(first.length - 1, 12); len >= 4; len--) {
+    const g = names.get(first.slice(0, len));
+    if (g) return g === 'U' ? null : g;
+  }
+  return null;
+}
+
+async function fetchStoryItems(userId) {
+  try {
+    const data = await igRequest(`/api/v1/feed/reels_media/?reel_ids=${userId}`);
+    const reel = data.reels?.[userId] || data.reels_media?.[0];
+    if (reel) return reel.items || [];
+  } catch (e) {
+    if (e.code === 'NOT_LOGGED_IN' || e.code === 'RATE_LIMIT') throw e;
+  }
+  const data = await igRequest(`/api/v1/feed/user/${userId}/story/`);
+  return data.reel?.items || [];
+}
+
+function storyWithPolls(item) {
+  const polls = (item.story_polls || []).map((p) => p.poll_sticker).filter(Boolean).map((s) => ({
+    pollId: String(s.poll_id ?? s.id),
+    question: s.question || '',
+    options: (s.tallies || []).map((t, i) => t.text || `Option ${i + 1}`),
+    tallies: (s.tallies || []).map((t) => t.count ?? 0),
+    result: null,
+  }));
+  const thumbs = item.image_versions2?.candidates || [];
+  return {
+    mediaPk: String(item.pk ?? String(item.id).split('_')[0]),
+    takenAt: (item.taken_at || 0) * 1000,
+    expiresAt: (item.expiring_at || 0) * 1000,
+    thumb: thumbs[thumbs.length - 1]?.url || '',
+    polls,
+  };
+}
+
+// Polls on your active stories, plus earlier analyses of stories that have
+// since expired (Instagram no longer lists those).
+async function loadStoryPolls() {
+  const { userId } = await getSession();
+  const key = pollsKey(userId);
+  const saved = (await ext.storage.local.get(key))[key];
+  const results = new Map((saved?.stories || []).flatMap((s) => s.polls.map((p) => [p.pollId, p.result])));
+  const live = (await fetchStoryItems(userId)).map(storyWithPolls).filter((s) => s.polls.length);
+  for (const s of live) for (const p of s.polls) p.result = results.get(p.pollId) || null;
+  const liveIds = new Set(live.map((s) => s.mediaPk));
+  const expired = (saved?.stories || []).filter((s) => !liveIds.has(s.mediaPk) && s.polls.some((p) => p.result));
+  const polls = { stories: [...live, ...expired].sort((a, b) => b.takenAt - a.takenAt).slice(0, 30), loadedAt: Date.now() };
+  await ext.storage.local.set({ [key]: polls });
+  return polls;
+}
+
+let analyzing = null;
+
+function analyzePoll(mediaPk, pollId) {
+  if (analyzing) return Promise.reject(new IgError('BUSY', 'Another poll is being analyzed. Try again when it finishes.'));
+  analyzing = runPollAnalysis(String(mediaPk), String(pollId)).finally(() => (analyzing = null));
+  return analyzing;
+}
+
+async function runPollAnalysis(mediaPk, pollId) {
+  const keepAlive = setInterval(() => ext.runtime.getPlatformInfo(), 20_000);
+  try {
+    const key = pollsKey((await getSession()).userId);
+    const saved = (await ext.storage.local.get(key))[key];
+    const poll = saved?.stories.find((s) => s.mediaPk === mediaPk)?.polls.find((p) => p.pollId === pollId);
+    if (!poll) throw new IgError('NOT_FOUND', 'That poll isn’t on your stories any more. Refresh the list.');
+    const total = poll.tallies.reduce((a, b) => a + b, 0);
+    const names = await loadNames();
+    const counts = poll.options.map(() => ({ female: 0, male: 0, unknown: 0 }));
+    const seen = new Set();
+    let maxId = '';
+    do {
+      await ext.storage.local.set({ [POLL_PROGRESS_KEY]: { pollId, count: seen.size, total } });
+      const qs = maxId ? `?max_id=${encodeURIComponent(maxId)}` : '';
+      const data = await igRequest(`/api/v1/media/${mediaPk}/${pollId}/story_poll_voters/${qs}`);
+      const info = data.voter_info || data;
+      for (const v of info.voters || []) {
+        const voter = v.user || {};
+        const id = String(voter.pk ?? voter.id ?? voter.username ?? '');
+        const option = counts[v.vote];
+        if (!id || seen.has(id) || !option) continue;
+        seen.add(id);
+        const g = genderOf(voter.full_name, voter.username, names);
+        option[g === 'F' ? 'female' : g === 'M' ? 'male' : 'unknown']++;
+      }
+      maxId = info.more_available ? String(info.max_id || info.next_max_id || '') : '';
+      if (maxId) await sleep(jitter(...PAGE_DELAY));
+    } while (maxId);
+
+    const result = { counts, voters: seen.size, at: Date.now() };
+    const latest = (await ext.storage.local.get(key))[key];
+    const target = latest?.stories.find((s) => s.mediaPk === mediaPk)?.polls.find((p) => p.pollId === pollId);
+    if (target) {
+      target.result = result;
+      await ext.storage.local.set({ [key]: latest });
+    }
+    await ext.storage.local.remove(POLL_PROGRESS_KEY);
+    return result;
+  } catch (e) {
+    await ext.storage.local.set({ [POLL_PROGRESS_KEY]: { pollId, error: e.message } });
+    throw e;
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
 
 // ---------------------------------------------------------------- notifications & badge
@@ -1041,6 +1196,8 @@ ext.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     reset: resetData,
     saveImport: () => saveImport(msg.data),
     removeImport,
+    storyPolls: () => userAction(loadStoryPolls),
+    analyzePoll: () => userAction(() => analyzePoll(msg.mediaPk, msg.pollId)),
     unfollowAll: () => startUnfollowAll(msg.ids || []),
     stopUnfollowAll,
     pauseUnfollowAll: () => pauseUnfollowAll(!!msg.paused),

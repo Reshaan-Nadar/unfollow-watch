@@ -312,7 +312,7 @@ function render({ keepScroll = false } = {}) {
   renderNote();
   renderTabs();
   renderBulk();
-  renderList(keepScroll);
+  renderView(keepScroll);
 }
 
 function renderHeader() {
@@ -462,7 +462,7 @@ function renderTabs() {
 
   const current = ui.filters[ui.view];
   $('#chips').replaceChildren(
-    ...FILTERS[ui.view].map(([key, label]) => {
+    ...(FILTERS[ui.view] || []).map(([key, label]) => {
       const n = lists[ui.view][key].length;
       return el('button', {
         class: `chip${key === current ? ' active' : ''}`,
@@ -473,7 +473,7 @@ function renderTabs() {
       }, label, key !== 'all' && (hasBaseline() || n) ? el('span', { class: 'count' }, fmt(n)) : null);
     }),
   );
-  $('.toolbar').hidden = !hasBaseline() && !state.acct?.events?.length;
+  $('.toolbar').hidden = ui.view === 'polls' || (!hasBaseline() && !state.acct?.events?.length);
 }
 
 function buildItems() {
@@ -673,6 +673,147 @@ function downloadEmptyNodes() {
   ];
 }
 
+// ---------------------------------------------------------------- polls
+
+function renderView(keepScroll) {
+  const polls = ui.view === 'polls';
+  $('#pollsView').hidden = !polls;
+  $('#listWrap').hidden = polls;
+  if (polls) renderPolls();
+  else renderList(keepScroll);
+}
+
+const pct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
+
+// Female : male among voters whose names were recognised.
+function ratioText({ female, male }) {
+  if (!female && !male) return 'No recognised names';
+  if (!male) return 'All recognised voters female';
+  if (!female) return 'All recognised voters male';
+  const r = female / male;
+  return r >= 1 ? `${r.toFixed(1)} : 1 female to male` : `1 : ${(1 / r).toFixed(1)} female to male`;
+}
+
+function splitRow(label, votes, c) {
+  const known = c.female + c.male;
+  const all = known + c.unknown;
+  const seg = (cls, n) => (n ? el('span', { class: `seg ${cls}`, style: `flex-grow:${n}` }) : null);
+  return el('div', { class: 'split-row' },
+    el('div', { class: 'split-label' },
+      el('span', { class: 'split-name' }, label),
+      el('span', { class: 'muted' }, `${fmt(votes)} vote${votes === 1 ? '' : 's'}`)),
+    el('div', { class: 'split-bar', title: `${c.female} female · ${c.male} male · ${c.unknown} unknown` },
+      ...(all ? [seg('female', c.female), seg('male', c.male), seg('unknown', c.unknown)] : [el('span', { class: 'seg unknown', style: 'flex-grow:1' })])),
+    el('div', { class: 'split-nums' },
+      el('span', {}, el('b', {}, `${pct(c.female, known)}%`), ' female'),
+      el('span', {}, el('b', {}, `${pct(c.male, known)}%`), ' male'),
+      el('span', { class: 'muted' }, `${fmt(c.unknown)} unknown`)),
+    el('div', { class: 'split-ratio muted' }, ratioText(c)));
+}
+
+function pollCard(story, poll) {
+  const status = state.pollStatus?.pollId === poll.pollId ? state.pollStatus : null;
+  const running = status && !status.error;
+  const votes = poll.tallies.reduce((a, b) => a + b, 0);
+  const expired = story.expiresAt && story.expiresAt < Date.now();
+
+  const thumb = el('div', { class: 'poll-thumb' });
+  if (story.thumb) {
+    thumb.dataset.src = story.thumb;
+    loadAvatar(thumb);
+  }
+
+  let body;
+  if (running) {
+    const p = status.total ? Math.min(100, (status.count / status.total) * 100) : null;
+    body = el('div', { class: 'poll-progress' },
+      el('div', { class: 'track' }, el('div', { class: `fill${p == null ? ' indeterminate' : ''}`, style: p == null ? '' : `width:${p.toFixed(1)}%` })),
+      el('div', { class: 'progress-text' }, `Reading voters · ${fmt(status.count)}${status.total ? ` of ${fmt(status.total)}` : ''}`));
+  } else if (poll.result) {
+    const r = poll.result;
+    const all = r.counts.reduce((t, c) => ({ female: t.female + c.female, male: t.male + c.male, unknown: t.unknown + c.unknown }), { female: 0, male: 0, unknown: 0 });
+    body = el('div', { class: 'poll-result' },
+      splitRow('All voters', r.voters, all),
+      ...poll.options.map((o, i) => splitRow(o, poll.tallies[i] ?? 0, r.counts[i] || { female: 0, male: 0, unknown: 0 })),
+      el('div', { class: 'poll-foot' },
+        el('span', { class: 'muted' }, `Analyzed ${timeAgo(r.at)}`),
+        expired ? null : el('button', { class: 'link', disabled: !!state.pollStatus && !state.pollStatus.error, onclick: () => analyze(story, poll) }, 'Update')));
+  } else if (expired) {
+    body = el('p', { class: 'muted poll-note' }, 'This story has expired, so its voters can no longer be read.');
+  } else {
+    body = el('div', { class: 'poll-actions' },
+      el('button', { class: 'btn small primary', disabled: !votes || (!!state.pollStatus && !state.pollStatus.error), onclick: () => analyze(story, poll) },
+        votes ? 'Estimate female / male split' : 'No votes yet'));
+  }
+
+  return el('section', { class: 'poll' },
+    el('div', { class: 'poll-top' }, thumb,
+      el('div', { class: 'poll-head' },
+        el('div', { class: 'poll-q' }, poll.question || 'Poll'),
+        el('div', { class: 'meta' }, [
+          story.takenAt ? `Posted ${timeAgo(story.takenAt)}` : '',
+          `${fmt(votes)} vote${votes === 1 ? '' : 's'}`,
+          expired ? 'Expired' : '',
+        ].filter(Boolean).join(' · ')))),
+    body,
+    status?.error ? el('p', { class: 'error poll-note' }, status.error) : null);
+}
+
+function renderPolls() {
+  const box = $('#pollsView');
+  const data = state.polls;
+  const cards = (data?.stories || []).flatMap((s) => s.polls.map((p) => pollCard(s, p)));
+  const findBtn = el('button', { class: `btn small${data ? '' : ' primary'}`, disabled: ui.pollsLoading || !state.loggedInId, onclick: loadPolls },
+    ui.pollsLoading ? 'Loading…' : data ? 'Refresh' : 'Find my polls');
+
+  let content;
+  if (!data) {
+    content = el('div', { class: 'empty' },
+      el('h2', {}, 'Who voted on your story polls'),
+      el('p', {}, 'Find the polls on your active stories and see, for each option, roughly how many voters are female or male.'),
+      findBtn);
+  } else if (!cards.length) {
+    content = el('div', { class: 'empty' },
+      el('h2', {}, 'No polls on your stories'),
+      el('p', {}, 'Add a poll sticker to a story, then refresh. Stories last 24 hours; analyze a poll before it expires to keep its results.'));
+  }
+
+  box.replaceChildren(
+    data ? el('div', { class: 'polls-head' },
+      el('div', {},
+        el('div', { class: 'polls-title' }, 'Story polls'),
+        el('div', { class: 'meta' }, `Checked ${timeAgo(data.loadedAt)}`)),
+      findBtn) : null,
+    data && cards.length ? el('div', { class: 'legend' },
+      el('span', {}, el('i', { class: 'female' }), 'Female'),
+      el('span', {}, el('i', { class: 'male' }), 'Male'),
+      el('span', {}, el('i', { class: 'unknown' }), 'Unknown')) : null,
+    ...(content ? [content] : cards),
+    el('p', { class: 'polls-foot' },
+      'Instagram doesn’t share anyone’s gender, so this is an estimate from voters’ first names (display name, then username), matched against the World Gender Name Dictionary. ',
+      'Names it can’t tell, like unisex names, emoji or nicknames, count as unknown, and percentages are of recognised names only. ',
+      'Everything is worked out in your browser, and only the totals are saved.'),
+  );
+}
+
+async function loadPolls() {
+  ui.pollsLoading = true;
+  renderPolls();
+  const res = await send('storyPolls');
+  ui.pollsLoading = false;
+  if (!res?.ok) toast(res?.error || 'Couldn’t load your stories.');
+  else state.polls = res.data;
+  renderPolls();
+}
+
+async function analyze(story, poll) {
+  state.pollStatus = { pollId: poll.pollId, count: 0, total: poll.tallies.reduce((a, b) => a + b, 0) };
+  renderPolls();
+  const res = await send('analyzePoll', { mediaPk: story.mediaPk, pollId: poll.pollId });
+  if (!res?.ok) toast(res?.error || 'Couldn’t read the voters.');
+  await refresh();
+}
+
 // ---------------------------------------------------------------- unfollow all
 
 const UNFOLLOW_PER_DAY = 150; // keep in step with background.js
@@ -684,7 +825,7 @@ function renderBulk() {
   const bar = $('#bulk');
   const q = state?.queue;
   const onNotBack = ui.view === 'following' && ui.filters.following === 'notBack' && hasBaseline();
-  bar.hidden = !q && !onNotBack;
+  bar.hidden = ui.view === 'polls' || (!q && !onNotBack);
   if (bar.hidden) return;
 
   if (q) {
@@ -834,7 +975,7 @@ function setView(view, filter) {
   if (filter) ui.filters[view] = filter;
   renderTabs();
   renderBulk();
-  renderList(false);
+  renderView(false);
 }
 
 async function startScan() {
@@ -955,7 +1096,11 @@ ext.storage.onChanged.addListener((changes) => {
       renderEmpty();
     }
   }
-  if (changes.rateLimit || changes.unfollowQueue || Object.keys(changes).some((k) => k.startsWith('acct:') || k.startsWith('live:'))) refreshSoon();
+  if (changes.pollProgress) {
+    state.pollStatus = changes.pollProgress.newValue || null;
+    if (ui.view === 'polls') renderPolls();
+  }
+  if (changes.rateLimit || changes.unfollowQueue || Object.keys(changes).some((k) => /^(acct|live|polls):/.test(k))) refreshSoon();
 });
 
 // ---------------------------------------------------------------- boot

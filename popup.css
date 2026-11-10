@@ -362,3 +362,45 @@ label.setting { cursor: pointer; }
 .dialog h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; line-height: 1.3; }
 .dialog p { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* ---------- polls */
+
+:root { --female: #8b5cf6; --male: #0d9488; --unknown: #dcdcdc; }
+@media (prefers-color-scheme: dark) { :root { --female: #a78bfa; --male: #2dd4bf; --unknown: #474747; } }
+
+.polls-view { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 12px; }
+.polls-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px 4px; }
+.polls-title { font-weight: 600; }
+
+.legend { display: flex; gap: 14px; padding: 6px 16px 2px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 9px; height: 9px; border-radius: 2px; background: var(--unknown); }
+.legend i.female { background: var(--female); }
+.legend i.male { background: var(--male); }
+
+.poll { margin: 10px 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.poll-top { display: flex; gap: 10px; align-items: center; }
+.poll-thumb { flex: none; width: 30px; height: 48px; border-radius: 5px; overflow: hidden; background: var(--avatar); }
+.poll-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.poll-head { min-width: 0; }
+.poll-q { font-weight: 600; overflow-wrap: anywhere; }
+.poll-actions { margin-top: 10px; }
+.poll-progress { margin-top: 10px; }
+.poll-note { margin: 8px 0 0; font-size: 12px; }
+.poll-note.error { color: var(--danger); }
+.poll-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; }
+.poll-foot .link { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; cursor: pointer; }
+.poll-foot .link:disabled { opacity: 0.5; cursor: default; }
+
+.split-row { margin-top: 10px; }
+.split-label { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.split-name { font-weight: 600; overflow-wrap: anywhere; }
+.split-bar { display: flex; height: 8px; margin: 5px 0 4px; border-radius: 4px; overflow: hidden; background: var(--unknown); gap: 1px; }
+.seg { display: block; min-width: 2px; }
+.seg.female { background: var(--female); }
+.seg.male { background: var(--male); }
+.seg.unknown { background: var(--unknown); }
+.split-nums { display: flex; gap: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.split-ratio { font-size: 12px; margin-top: 1px; }
+
+.polls-foot { margin: 14px 16px 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }

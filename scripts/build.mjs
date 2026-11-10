@@ -22,7 +22,7 @@ import { crc32, deflateRawSync } from 'node:zlib';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist');
 const FILES = [
-  'background.js', 'popup.html', 'popup.css', 'popup.js', 'import.js', 'README.md', 'LICENSE',
+  'background.js', 'popup.html', 'popup.css', 'popup.js', 'import.js', 'README.md', 'LICENSE', 'data/names.txt',
   'icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png',
 ];
 const GECKO_ID = 'unfollow-watch@reshaan-nadar';
@@ -114,7 +114,7 @@ function build(target, targetManifest, { archive, folder }) {
   mkdirSync(out, { recursive: true });
   const manifestText = `${JSON.stringify(targetManifest, null, 2)}\n`;
   writeFileSync(join(out, 'manifest.json'), manifestText);
-  for (const f of FILES) cpSync(join(ROOT, f), join(out, f));
+  for (const f of FILES) cpSync(join(ROOT, f), join(out, f), { recursive: true });
 
   const prefix = folder ? `${folder}/` : '';
   const entries = [
